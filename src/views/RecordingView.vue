@@ -5,7 +5,7 @@
     <Card class="h-full flex justify-center items-center gap-2">
       <div v-if="sampling" class="flex justify-center items-center gap-2">
         <Card
-          v-for="(n, i) in usedChannels"
+          v-for="(n, i) in usedChannels[0]"
           :key="i"
           class="flex flex-col justify-center items-center p-2 w-20"
         >
@@ -22,8 +22,9 @@
     <footer>
       <Card class="flex justify-center items-center p-2 gap-2">
         <Button
+          v-if="!sampling"
           variant="outline"
-          :disabled="loading || sampling"
+          :disabled="loading"
           @click="connected ? disconnect() : connect()"
         >
           <i
@@ -37,8 +38,8 @@
         </Button>
 
         <Button
+          v-if="connected"
           variant="outline"
-          :disabled="!connected"
           @click="sampling ? stopSampling() : startSampling()"
         >
           <i
@@ -50,6 +51,52 @@
           ></i>
           <span>{{ sampling ? 'Stop' : 'Start' }}</span>
         </Button>
+
+        <Dialog v-if="connected && !sampling">
+          <DialogTrigger>
+            <Button variant="outline" size="icon">
+              <i
+                class="fa-solid fa-gear text-muted-foreground"
+                :class="[loading ? 'fa-fade' : '']"
+              ></i>
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Set recording parameters</DialogTitle>
+            </DialogHeader>
+
+            <DialogDescription></DialogDescription>
+
+            <div class="flex gap-2 text-nowrap items-center justify-between">
+              <h3>Sampling rate | {{ samplingRate[0] }}Hz</h3>
+              <Slider class="w-[60%]" v-model="samplingRate" :min="100" :max="1000" :step="100" />
+            </div>
+
+            <div class="flex gap-2 text-nowrap items-center justify-between">
+              <h3>Used channels | {{ usedChannels[0] }}</h3>
+              <Slider
+                class="w-[60%]"
+                v-model="usedChannels"
+                :min="1"
+                :max="channelLabels.length"
+                :step="1"
+              />
+            </div>
+
+            <div class="flex justify-between items-center">
+              <Card
+                v-for="(n, i) in channelLabels.length"
+                :key="i"
+                class="flex flex-col justify-center items-center p-2 w-11"
+              >
+                <p :class="[i < usedChannels ? 'text-primary' : 'text-secondary']">
+                  {{ channelLabels[i] }}
+                </p>
+              </Card>
+            </div>
+          </DialogContent>
+        </Dialog>
       </Card>
     </footer>
   </div>
@@ -58,6 +105,15 @@
 <script setup>
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger
+} from '@/components/ui/dialog'
+import DialogDescription from '@/components/ui/dialog/DialogDescription.vue'
+import { Slider } from '@/components/ui/slider'
 import { ref } from 'vue'
 
 const loading = ref(false)
@@ -67,8 +123,8 @@ const port = ref(null)
 const channels = ref([])
 const channelLabels = ref([])
 const sampling = ref(false)
-const usedChannels = ref(3)
-const samplingRate = ref(100)
+const usedChannels = ref([3])
+const samplingRate = ref([100])
 const readPromise = ref(null)
 
 const connect = async () => {
@@ -148,10 +204,10 @@ const disconnect = async () => {
 //   }
 // }
 
-const sendSettings = async (sampling, usedChannels, samplingRate) => {
+const sendSettings = async () => {
   if (!port.value) return
   const writer = port.value.writable.getWriter()
-  const command = `s${sampling ? '1' : '0'},${usedChannels},${samplingRate}\n`
+  const command = `s${sampling.value ? '1' : '0'},${usedChannels.value[0]},${samplingRate.value[0]}\n`
   await writer.write(new TextEncoder().encode(command))
   writer.releaseLock()
 }
@@ -187,8 +243,8 @@ const getInfo = async () => {
   const decoded = received.trim().split('\r\n')[0].split(',')
 
   if (decoded.length >= 2) {
-    usedChannels.value = parseInt(decoded[0])
-    samplingRate.value = parseInt(decoded[1])
+    usedChannels.value[0] = parseInt(decoded[0])
+    samplingRate.value[0] = parseInt(decoded[1])
     channelLabels.value = decoded.slice(2)
   } else {
     console.error('Invalid info format received')
@@ -197,29 +253,34 @@ const getInfo = async () => {
 
 const startSampling = async () => {
   sampling.value = true
-  await sendSettings(true, usedChannels.value, samplingRate.value)
+  await sendSettings()
   readPromise.value = readSamples()
 }
 
 const stopSampling = async () => {
   sampling.value = false
   await readPromise.value
-  await sendSettings(false, usedChannels.value, samplingRate.value)
+  await sendSettings()
 }
 
 const readSamples = async () => {
   if (!port.value) return
   const reader = port.value.readable.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
 
   try {
     while (sampling.value) {
       const { value, done } = await reader.read()
       if (done) break
-      channels.value = new TextDecoder()
-        .decode(value)
-        .split('\r\n')[0]
-        .split(',')
-        .map((value) => parseInt(value))
+      buffer += decoder.decode(value, { stream: true })
+
+      let lines = buffer.split('\r\n')
+      buffer = lines.pop() // Keep any incomplete line in the buffer
+
+      for (let line of lines) {
+        channels.value = line.split(',').map((value) => parseInt(value))
+      }
     }
   } catch (error) {
     console.error('Error reading samples:', error)
