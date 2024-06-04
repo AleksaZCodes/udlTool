@@ -2,17 +2,8 @@
   <div class="flex flex-col p-2 gap-2">
     <!-- Menubar and other components can be added here -->
 
-    <Card class="h-full flex justify-center items-center gap-2">
-      <div v-if="sampling" class="flex justify-center items-center gap-2">
-        <Card
-          v-for="(n, i) in usedChannels[0]"
-          :key="i"
-          class="flex flex-col justify-center items-center p-2 w-20"
-        >
-          <h2>{{ channels[i] }}</h2>
-          <p class="text-muted-foreground">{{ channelLabels[i] }}</p>
-        </Card>
-      </div>
+    <Card class="h-full flex justify-center items-center p-2 gap-2">
+      <Line v-if="sampling" :data="chartData" :options="chartOptions" />
       <p v-else-if="connected" class="text-muted-foreground italic">
         Start the sampling to see data...
       </p>
@@ -114,7 +105,12 @@ import {
 } from '@/components/ui/dialog'
 import DialogDescription from '@/components/ui/dialog/DialogDescription.vue'
 import { Slider } from '@/components/ui/slider'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement } from 'chart.js'
+import { Line } from 'vue-chartjs'
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement)
 
 const loading = ref(false)
 const connected = ref(false)
@@ -126,6 +122,41 @@ const sampling = ref(false)
 const usedChannels = ref([3])
 const samplingRate = ref([100])
 const readPromise = ref(null)
+
+const bufferSize = ref(1000)
+const chartBuffer = computed(() => channelLabels.value.map(() => Array(bufferSize.value).fill(0)))
+
+const chartData = computed(() => {
+  return {
+    labels: Array(bufferSize.value).fill(''),
+    datasets: channelLabels.value.map((label, index) => ({
+      label,
+      data: chartBuffer.value[index],
+      backgroundColor: `rgba(${(index * 50) % 255}, ${(index * 80) % 255}, ${(index * 110) % 255}, 0.2)`,
+      borderColor: `rgba(${(index * 50) % 255}, ${(index * 80) % 255}, ${(index * 110) % 255}, 1)`
+    }))
+  }
+})
+
+const chartOptions = ref({
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  elements: {
+    point: {
+      radius: 0
+    }
+  },
+  scales: {
+    x: {
+      display: false
+    },
+    y: {
+      beginAtZero: true,
+      display: false
+    }
+  }
+})
 
 const connect = async () => {
   try {
@@ -155,6 +186,8 @@ const connect = async () => {
 
     await getInfo()
 
+    console.log(bufferSize.value, chartBuffer.value)
+
     connected.value = true
     loading.value = false
   } catch (error) {
@@ -171,38 +204,6 @@ const disconnect = async () => {
     sampling.value = false
   }
 }
-
-// const sendSettings = async (sampling, usedChannels, samplingRate) => {
-//   if (!port.value) return
-
-//   // Send the command
-//   const writer = port.value.writable.getWriter()
-//   const command = `s${sampling ? '1' : '0'},${usedChannels},${samplingRate}\n`
-//   await writer.write(new TextEncoder().encode(command))
-//   writer.releaseLock()
-
-//   // Wait for the "OK\r\n" response
-//   const reader = port.value.readable.getReader()
-//   const decoder = new TextDecoder()
-//   let received = ''
-
-//   try {
-//     while (true) {
-//       const { value, done } = await reader.read()
-//       if (done) {
-//         throw new Error('Port closed before OK response received')
-//       }
-//       received += decoder.decode(value, { stream: true })
-//       if (received.includes('OK\r\n')) {
-//         break
-//       }
-//     }
-//   } catch (error) {
-//     console.error('Failed to receive OK response:', error)
-//   } finally {
-//     reader.releaseLock()
-//   }
-// }
 
 const sendSettings = async () => {
   if (!port.value) return
@@ -280,6 +281,7 @@ const readSamples = async () => {
 
       for (let line of lines) {
         channels.value = line.split(',').map((value) => parseInt(value))
+        updateChart()
       }
     }
   } catch (error) {
@@ -287,5 +289,14 @@ const readSamples = async () => {
   } finally {
     reader.releaseLock()
   }
+}
+
+const updateChart = () => {
+  if (!channels.value || channels.value.length === 0) return
+
+  channels.value.forEach((channelValue, index) => {
+    chartBuffer.value[index].shift()
+    chartBuffer.value[index].push(channelValue)
+  })
 }
 </script>
