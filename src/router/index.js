@@ -6,12 +6,12 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
-      path: '/',
+      path: 'udltool/',
       name: 'home',
       component: HomeView
     },
     {
-      path: '/recording',
+      path: 'udltool/recording',
       name: 'recording',
       component: RecordingView
     }
