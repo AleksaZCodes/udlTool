@@ -3,7 +3,7 @@
     <!-- Menubar and other components can be added here -->
 
     <Card class="h-full flex justify-center items-center p-2 gap-2">
-      <Line v-if="sampling" :data="chartData" :options="chartOptions" />
+      <canvas v-if="sampling" id="chart" width="1000" height="400"></canvas>
       <p v-else-if="connected" class="text-muted-foreground italic">
         Start the sampling to see data...
       </p>
@@ -105,12 +105,8 @@ import {
 } from '@/components/ui/dialog'
 import DialogDescription from '@/components/ui/dialog/DialogDescription.vue'
 import { Slider } from '@/components/ui/slider'
-import { computed, ref } from 'vue'
-
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement } from 'chart.js'
-import { Line } from 'vue-chartjs'
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement)
+import { SmoothieChart, TimeSeries } from 'smoothie'
+import { ref } from 'vue'
 
 const loading = ref(false)
 const connected = ref(false)
@@ -123,40 +119,20 @@ const usedChannels = ref([3])
 const samplingRate = ref([100])
 const readPromise = ref(null)
 
-const bufferSize = ref(1000)
-const chartBuffer = computed(() => channelLabels.value.map(() => Array(bufferSize.value).fill(0)))
-
-const chartData = computed(() => {
-  return {
-    labels: Array(bufferSize.value).fill(''),
-    datasets: channelLabels.value.map((label, index) => ({
-      label,
-      data: chartBuffer.value[index],
-      backgroundColor: `rgba(${(index * 50) % 255}, ${(index * 80) % 255}, ${(index * 110) % 255}, 0.2)`,
-      borderColor: `rgba(${(index * 50) % 255}, ${(index * 80) % 255}, ${(index * 110) % 255}, 1)`
-    }))
+const smoothie = new SmoothieChart({
+  millisPerPixel: 10,
+  grid: { fillStyle: '#ffffff', strokeStyle: '#ffffff', borderVisible: false },
+  labels: { disabled: true, intermediateLabelSameAxis: false },
+  tooltipLine: { strokeStyle: '#bbbbbb' },
+  yRangeFunction: () => {
+    return { min: 0, max: 1023 }
   }
 })
 
-const chartOptions = ref({
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false,
-  elements: {
-    point: {
-      radius: 0
-    }
-  },
-  scales: {
-    x: {
-      display: false
-    },
-    y: {
-      beginAtZero: true,
-      display: false
-    }
-  }
-})
+const channel = new TimeSeries()
+
+// const bufferSize = ref(1000)
+// const chartBuffer = computed(() => channelLabels.value.map(() => Array(bufferSize.value).fill(0)))
 
 const connect = async () => {
   try {
@@ -185,8 +161,6 @@ const connect = async () => {
     reader.releaseLock()
 
     await getInfo()
-
-    console.log(bufferSize.value, chartBuffer.value)
 
     connected.value = true
     loading.value = false
@@ -255,6 +229,14 @@ const getInfo = async () => {
 const startSampling = async () => {
   sampling.value = true
   await sendSettings()
+  smoothie.addTimeSeries(channel, {
+    lineWidth: 3,
+    strokeStyle: '#16a34a',
+    fillToBottom: false,
+    interpolation: 'bezier'
+  })
+  smoothie.streamTo(document.getElementById('chart'), 0)
+  console.log('done')
   readPromise.value = readSamples()
 }
 
@@ -281,7 +263,7 @@ const readSamples = async () => {
 
       for (let line of lines) {
         channels.value = line.split(',').map((value) => parseInt(value))
-        updateChart()
+        channel.append(Date.now(), channels.value[0])
       }
     }
   } catch (error) {
@@ -289,14 +271,5 @@ const readSamples = async () => {
   } finally {
     reader.releaseLock()
   }
-}
-
-const updateChart = () => {
-  if (!channels.value || channels.value.length === 0) return
-
-  channels.value.forEach((channelValue, index) => {
-    chartBuffer.value[index].shift()
-    chartBuffer.value[index].push(channelValue)
-  })
 }
 </script>
